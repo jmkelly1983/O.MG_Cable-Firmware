@@ -17,6 +17,7 @@ from time import time
 from signal import signal, SIGINT
 from serial.tools.list_ports import comports
 from serial.tools import hexlify_codec
+from math import floor
 
 from pprint import pprint
 
