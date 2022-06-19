@@ -17,7 +17,6 @@ from time import time
 from signal import signal, SIGINT
 from serial.tools.list_ports import comports
 from serial.tools import hexlify_codec
-from math import floor
 
 from pprint import pprint
 
@@ -407,8 +406,8 @@ def omg_probe():
         complete(1)
 
 
-def omg_patch(_ssid, _pass, _mode, slotsize=0, percent=30%):
-    FILE_INIT = results.FILE_INIT
+def omg_patch(_ssid, _pass, _mode, slotsize=0, percent=30):
+    FILE_INIT = results.FILE_OFAT_INIT
 
     init_cmd = "INIT;"
     settings = {
@@ -417,7 +416,7 @@ def omg_patch(_ssid, _pass, _mode, slotsize=0, percent=30%):
         "wifipass": _pass
     }
     for config,value in settings.items():
-        init_cmd+=f"{KEY}{SEP}{VALUE};".format(SEP=":", KEY=config,VALUE=value)
+        init_cmd+="{KEY}{SEP}{VALUE};".format(SEP=":", KEY=config,VALUE=value)
     #  once booted we know more, this is a sane default for now
     # if we set this to %f we can actually erase and allocate at once
     if slotsize>0 :
@@ -433,8 +432,8 @@ def omg_patch(_ssid, _pass, _mode, slotsize=0, percent=30%):
             length = len(init_cmd)
             fill = (4*1024)-length
             init_cmd += "\00"*abs(fill)
-            f.write(init_cmd)  
-    except KeyError:
+            f.write(bytes(init_cmd.encode("utf-8")))  
+    except:
         print("\n<<< PATCH FAILURE, ABORTING >>>")
         complete(1)
 
@@ -535,7 +534,7 @@ def omg_flashfw():
         FILE_INIT = results.FILE_INIT
         FILE_ELF0 = results.FILE_ELF0
         FILE_ELF1 = results.FILE_ELF1
-        FILE_OFAT_INIT = results.OFAT_INIT
+        FILE_OFAT_INIT = results.FILE_OFAT_INIT
 
         if flash_size < 0x200000:
             command = ['--baud', baudrate, '--port', results.PORT_PATH, 'write_flash', '-fs', '1MB', '-fm', 'dout', '0xfc000', FILE_INIT, '0x00000', FILE_ELF0, '0x10000', FILE_ELF1, '0x80000', FILE_PAGE, '0x7f000', FILE_OFAT_INIT]
@@ -694,4 +693,4 @@ if __name__ == '__main__':
         print("<<< FATAL ERROR: %s. PLEASE DISCONNECT AND RECONNECT CABLE AND START TASK AGAIN >>>"%str(e))
         sys.exit(1) # special case
     complete(0)
-    
+   
