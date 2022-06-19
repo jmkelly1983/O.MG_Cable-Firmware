@@ -1,4 +1,4 @@
-# Copyright 2022 Mischief Gadgets LLC
+# Copyright 2021 Mischief Gadgets LLC
 
 import os
 import sys
@@ -125,9 +125,6 @@ class omg_results():
         self.FILE_ELF0 = "image.elf-0x00000.bin"
         self.FILE_ELF1 = "image.elf-0x10000.bin"
         self.FILE_BLANK = "blank.bin"
-        self.FILE_OFAT_INIT = "init.bin"
-        self.FLASH_SLOTS = 0
-        self.FLASH_PAYLOAD_SIZE = 1
 
 def get_dev_info(dev):
     esp = flashapi.ESP8266ROM(dev, baudrate, None)
@@ -144,7 +141,7 @@ def ask_for_flasherhwver():
     """
         Ask for the flasher version, either 1 or 2 right now...
     """
-    #if  and FLASHER_VERSION != 1:
+    #if FLASHER_SKIP_ON_VALID_DETECTION and FLASHER_VERSION != 1:
     #    return FLASHER_VERSION
     FLASHER_VERSION = 1    
     flash_version = FLASHER_VERSION
@@ -168,7 +165,6 @@ def ask_for_port():
     i = 0
     sys.stderr.write('\n--- Available ports:\n')
     ports = []
-    ports_info = {}
     skippedports = []
     for n, (port, desc, hwid) in enumerate(sorted(comports()), 1):
         includedport = "CP210"
@@ -176,10 +172,8 @@ def ask_for_port():
             i+=1
             sys.stderr.write('--- {:2}: {:20} {!r}\n'.format(i, port, desc))
             ports.append(port)
-            ports_info[port]={'port': port,'desc': desc,'hwid': hwid}
         else: 
             skippedports.append(port)
-    pprint(ports_info)
     while True:
         num_ports = len(ports)
         #if num_ports == 1:
@@ -195,13 +189,6 @@ def ask_for_port():
             pass
         else:
             port = ports[index]
-            FLASHER_VERSION = 1 # update back to 1 
-            if 'cp2102n' in str(ports_info[port]['desc'].lower()):
-                print("Found programmer version: 2")
-                print("This programmer will not require reconnection, please utilize the visual indicators on the programmer to ensure omg device is properly connected.")
-                FLASHER_VERSION = 2
-            else:
-                print("Found programmer version: 1")
         return port
 
 def omg_flash(command,tries=2):
@@ -390,6 +377,9 @@ def omg_probe():
 
     detected_ports = ask_for_port()
     devices = detected_ports
+ 
+    FLASHER_VERSION = ask_for_flasherhwver()
+    
     
     results.PORT_PATH = devices
     if len(devices) > 1:
@@ -406,33 +396,55 @@ def omg_probe():
         complete(1)
 
 
-def omg_patch(_ssid, _pass, _mode, slotsize=0, percent=30%):
-    FILE_INIT = results.FILE_INIT
-
-    init_cmd = "INIT;"
-    settings = {
-        "wifimode": _mode,
-        "wifissid": _ssid,
-        "wifipass": _pass
-    }
-    for config,value in settings.items():
-        init_cmd+=f"{KEY}{SEP}{VALUE};".format(SEP=":", KEY=config,VALUE=value)
-    #  once booted we know more, this is a sane default for now
-    # if we set this to %f we can actually erase and allocate at once
-    if slotsize>0 :
-        init_cmd += "f{SEP}keylog=0".format(SEP=":")
-        ns = floor(((250*4)*(percent*.01))/(slotsize*4))
-        for i in range(1,ns+1):
-            init+="f{SEP}payload={SLOT};".format(SEP=":",SLOT=slotsize)
-        init_cmd += "f{SEP}keylog=*;".format(SEP=":")    
-    init_cmd += "\0"
+def omg_patch(_ssid, _pass, _mode):
+    FILE_PAGE = results.FILE_PAGE
 
     try:
-        with open(FILE_INIT,'wb') as f:
-            length = len(init_cmd)
-            fill = (4*1024)-length
-            init_cmd += "\00"*abs(fill)
-            f.write(init_cmd)  
+        BYTES = []
+        with open(FILE_PAGE, "rb") as f:
+            byte = f.read(1)
+            BYTES.append(byte)
+            while byte != b"":
+                byte = f.read(1)
+                BYTES.append(byte)
+
+            offset = 0
+
+            for i, byte in enumerate(BYTES):
+                if chr(int(hex(int.from_bytes(BYTES[i + 0], "big"))[2:].upper(), 16)) == 'a':
+                    if chr(int(hex(int.from_bytes(BYTES[i + 1], "big"))[2:].upper(), 16)) == 'c':
+                        if chr(int(hex(int.from_bytes(BYTES[i + 2], "big"))[2:].upper(), 16)) == 'c':
+                            if chr(int(hex(int.from_bytes(BYTES[i + 3], "big"))[2:].upper(), 16)) == 'e':
+                                if chr(int(hex(int.from_bytes(BYTES[i + 4], "big"))[2:].upper(), 16)) == 's':
+                                    if chr(int(hex(int.from_bytes(BYTES[i + 5], "big"))[2:].upper(), 16)) == 's':
+                                        if chr(int(hex(int.from_bytes(BYTES[i + 6], "big"))[2:].upper(), 16)) == '.':
+                                            if chr(int(hex(int.from_bytes(BYTES[i + 7], "big"))[2:].upper(), 16)) == 'l':
+                                                if chr(int(hex(int.from_bytes(BYTES[i + 8], "big"))[2:].upper(), 16)) == 'o':
+                                                    if chr(int(hex(int.from_bytes(BYTES[i + 9], "big"))[2:].upper(), 16)) == 'g':
+                                                        offset = i
+                                                        break
+        offset += 24
+        d = hex(int.from_bytes(BYTES[offset + 0], "big"))[2:].zfill(2)
+        c = hex(int.from_bytes(BYTES[offset + 1], "big"))[2:].zfill(2)
+        b = hex(int.from_bytes(BYTES[offset + 2], "big"))[2:].zfill(2)
+        a = hex(int.from_bytes(BYTES[offset + 3], "big"))[2:].zfill(2)
+        offset = int(a + b + c + d, 16)
+        length = len("SSID {SSID} PASS {PASS} MODE {MODE}".format(SSID=_ssid, PASS=_pass, MODE=_mode))
+        aligned = 114
+        _bytes = bytearray("SSID {SSID}\0PASS {PASS}\0MODE {MODE}{NULL}".format(SSID=_ssid, PASS=_pass, MODE=_mode, NULL="\0" * (aligned - length)).encode("utf8"))
+        for i in range(offset + 0, offset + aligned):
+            BYTES[i] = _bytes[i - offset]
+        try:
+            os.remove(FILE_PAGE)
+        except:
+            pass
+        with open(FILE_PAGE, 'bw+') as f:
+            for byte in BYTES:
+                if type(byte) == int:
+                    f.write(bytes([byte]))
+                else:
+                    f.write(byte)
+        #print("\n<<< PATCH SUCCESS, FLASHING FIRMWARE >>>\n")
     except KeyError:
         print("\n<<< PATCH FAILURE, ABORTING >>>")
         complete(1)
@@ -488,43 +500,7 @@ def omg_input():
                 pass
 
         results.WIFI_PASS = WIFI_PASS
-       
-    FLASH_CUSTOMIZE = 0
-    FLASH_SIZE = 0
-    FLASH_PAYLOAD_PERCENT = 40
-    while not SANITIZED_SELECTION:
-        try:
-            CUST_INPUT = str(input("\nCUSTOMIZE PAYLOAD AND KEYLOG ALLOCATIONS?\n(Note: Only compatible with Keylogger and Advanced O.MG Devices)\nBegin Customization? (Yes or No)")).lower()
-            if "yes" in CUST_INPUT or "no" in CUST_INPUT:
-                SANITIZED_SELECTION = True
-            if "yes" in CUST_INPUT:
-                FLASH_CUSTOMIZE=1
-        except:
-            pass
 
-    if FLASH_CUSTOMIZE:
-        while not SANITIZED_SELECTION:
-            try:
-                CUST_INPUT = int(str(input("\nPERCENTAGE OF FLASH ALLOCATED TO PAYLOAD: [Usually 40%] ")).lower().replace("%",""))
-                if CUST_INPUT>0 and CUST_INPUT<101:
-                    SANITIZED_SELECTION=true
-                    FLASH_PAYLOAD_PERCENT = CUST_INPUT
-                    break
-            except:
-                pass
-                
-        while not SANITIZED_SELECTION:
-            try:
-                CUST_INPUT = int(str(input("\nENTER PAYLOAD SLOT SIZE [In 4k chunks]: ")).lower().replace("%",""))
-                if (CUST_INPUT%4)==0:
-                    FLASH_SIZE=(CUST_INPUT)/4
-                else:
-                    print(f"\n{CUST_INPUT} is not divisible by 4, try again. Note: Default is 4k")
-            except:
-                pass
-        results.FLASH_SLOTS = FLASH_SIZE
-        results.FLASH_PAYLOAD_SIZE = FLASH_PAYLOAD_PERCENT
-        
 
 def omg_flashfw():
     mac, flash_size = get_dev_info(results.PORT_PATH)
@@ -534,12 +510,12 @@ def omg_flashfw():
         FILE_INIT = results.FILE_INIT
         FILE_ELF0 = results.FILE_ELF0
         FILE_ELF1 = results.FILE_ELF1
-        FILE_OFAT_INIT = results.OFAT_INIT
+        FILE_BLANK = results.FILE_BLANK
 
         if flash_size < 0x200000:
-            command = ['--baud', baudrate, '--port', results.PORT_PATH, 'write_flash', '-fs', '1MB', '-fm', 'dout', '0xfc000', FILE_INIT, '0x00000', FILE_ELF0, '0x10000', FILE_ELF1, '0x80000', FILE_PAGE, '0x7f000', FILE_OFAT_INIT]
+            command = ['--baud', baudrate, '--port', results.PORT_PATH, 'write_flash', '-fs', '1MB', '-fm', 'dout', '0xfc000', FILE_INIT, '0x00000', FILE_ELF0, '0x10000', FILE_ELF1, '0x80000', FILE_PAGE, '0x7f000', FILE_BLANK]
         else:
-            command = ['--baud', baudrate, '--port', results.PORT_PATH, 'write_flash', '-fs', '2MB', '-fm', 'dout', '0x1fc000', FILE_INIT, '0x00000', FILE_ELF0, '0x10000', FILE_ELF1, '0x80000', FILE_PAGE, '0x7f000', FILE_OFAT_INIT]
+            command = ['--baud', baudrate, '--port', results.PORT_PATH, 'write_flash', '-fs', '2MB', '-fm', 'dout', '0x1fc000', FILE_INIT, '0x00000', FILE_ELF0, '0x10000', FILE_ELF1, '0x80000', FILE_PAGE, '0x7f000', FILE_BLANK]
         omg_flash(command)
 
     except:
@@ -571,8 +547,7 @@ if __name__ == '__main__':
     omg_locate()
 
     omg_probe()
-    
-    FLASHER_VERSION = ask_for_flasherhwver()
+
     MENU_MODE = ''
     SANITIZED_SELECTION = False
 
@@ -612,12 +587,12 @@ if __name__ == '__main__':
             #omg_flash(command)
 
             omg_input()
-            omg_patch(results.WIFI_SSID, results.WIFI_PASS, results.WIFI_MODE, results.FLASH_SLOTS, results.FLASH_PAYLOAD_SIZE)
+            omg_patch(results.WIFI_SSID, results.WIFI_PASS, results.WIFI_MODE)
             omg_flashfw()
             print("\n[ WIFI SETTINGS ]")
             print("\n\tWIFI_SSID: {SSID}\n\tWIFI_PASS: {PASS}\n\tWIFI_MODE: {MODE}\n\tWIFI_TYPE: {TYPE}".format(SSID=results.WIFI_SSID, PASS=results.WIFI_PASS, MODE=results.WIFI_MODE, TYPE=results.WIFI_TYPE))
             print("\n[ FIRMWARE USED ]")
-            print("\n\tINIT: {INIT}\n\tELF0: {ELF0}\n\tELF1: {ELF1}\n\tPAGE: {PAGE}".format(INIT=results.FILE_INIT, ELF0=results.FILE_ELF0, ELF1=results.FILE_ELF1, PAGE=results.FILE_PAGE, OFAT_INIT=results.OFAT_INIT))
+            print("\n\tINIT: {INIT}\n\tELF0: {ELF0}\n\tELF1: {ELF1}\n\tPAGE: {PAGE}".format(INIT=results.FILE_INIT, ELF0=results.FILE_ELF0, ELF1=results.FILE_ELF1, PAGE=results.FILE_PAGE))
             print("\n<<< FIRMWARE PROCESS FINISHED, REMOVE CABLE >>>\n")
         elif MENU_MODE == '2':
             print("\nFACTORY RESET")
@@ -645,12 +620,12 @@ if __name__ == '__main__':
             while repeating != 'e':
                 #command = ['--baud', baudrate, '--port', results.PORT_PATH, 'erase_region', '0x7F0000', '0x1000']
                 #omg_flash(command)
-                omg_patch(results.WIFI_SSID, results.WIFI_PASS, results.WIFI_MODE, results.FLASH_SLOTS, results.FLASH_PAYLOAD_SIZE)
+                omg_patch(results.WIFI_SSID, results.WIFI_PASS, results.WIFI_MODE)
                 omg_flashfw()
                 print("\n[ WIFI SETTINGS ]")
                 print("\n\tWIFI_SSID: {SSID}\n\tWIFI_PASS: {PASS}\n\tWIFI_MODE: {MODE}\n\tWIFI_TYPE: {TYPE}".format(SSID=results.WIFI_SSID, PASS=results.WIFI_PASS, MODE=results.WIFI_MODE, TYPE=results.WIFI_TYPE))
                 print("\n[ FIRMWARE USED ]")
-                print("\n\tINIT: {INIT}\n\tELF0: {ELF0}\n\tELF1: {ELF1}\n\tPAGE: {PAGE}".format(INIT=results.FILE_INIT, ELF0=results.FILE_ELF0, ELF1=results.FILE_ELF1, PAGE=results.FILE_PAGE, OFAT_INIT=results.OFAT_INIT))
+                print("\n\tINIT: {INIT}\n\tELF0: {ELF0}\n\tELF1: {ELF1}\n\tPAGE: {PAGE}".format(INIT=results.FILE_INIT, ELF0=results.FILE_ELF0, ELF1=results.FILE_ELF1, PAGE=results.FILE_PAGE))
                 print("\n<<< PROCESS FINISHED, REMOVE CABLE AND PLUG IN NEW CABLE >>>\n")
                 repeating = input("\n\n<<< PRESS ENTER TO UPGRADE NEXT CABLE, OR 'E' TO EXIT >>>\n")
                 complete(0)
