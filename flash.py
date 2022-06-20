@@ -14,6 +14,7 @@ import http.client
 import urllib.parse
 from sys import exit
 from time import time
+from math import floor
 from signal import signal, SIGINT
 from serial.tools.list_ports import comports
 from serial.tools import hexlify_codec
@@ -179,7 +180,6 @@ def ask_for_port():
             ports_info[port]={'port': port,'desc': desc,'hwid': hwid}
         else: 
             skippedports.append(port)
-    pprint(ports_info)
     while True:
         num_ports = len(ports)
         #if num_ports == 1:
@@ -194,15 +194,20 @@ def ask_for_port():
         except ValueError:
             pass
         else:
+            print("i am here")
             port = ports[index]
-            FLASHER_VERSION = 1 # update back to 1 
-            if 'cp2102n' in str(ports_info[port]['desc'].lower()):
-                print("Found programmer version: 2")
-                print("This programmer will not require reconnection, please utilize the visual indicators on the programmer to ensure omg device is properly connected.")
-                FLASHER_VERSION = 2
-            else:
-                print("Found programmer version: 1")
-        return port
+            FLASHER_VERSION = 1 # update back to 1         
+            try:      
+                if 'cp2102n' in str(ports_info[port]['desc'].lower()):
+                    print("Found programmer version: 2")
+                    print("This programmer will not require reconnection, please utilize the visual indicators on the programmer to ensure omg device is properly connected.")
+                    FLASHER_VERSION = 2
+                else:
+                    print("Found programmer version: 1")
+            except KeyError:
+                print("Defaulting to programmer version: 1")
+            # finish
+            return port
 
 def omg_flash(command,tries=2):
     global FLASHER_VERSION
@@ -313,8 +318,6 @@ def omg_fetch_latest_firmware(create_dst_dir=False,dst_dir="./firmware"):
 
 def omg_locate():
     def omg_check(fw_path):
-    
-        pprint(fw_path)
         PAGE_LOCATED = False
         INIT_LOCATED = False
         ELF0_LOCATED = False
@@ -355,6 +358,13 @@ def omg_locate():
             if os.path.isfile(fw_path + results.FILE_BLANK):
                 results.FILE_BLANK = fw_path + results.FILE_BLANK
                 ELF2_LOCATED = True
+                
+        if os.path.isfile(fw_path + results.FILE_OFAT_INIT):
+            try:
+                os.unlink(fw_path + results.FILE_OFAT_INIT)
+            except:
+                pass
+        results.FILE_OFAT_INIT = fw_path + results.FILE_OFAT_INIT
         # return data
         return (PAGE_LOCATED,INIT_LOCATED,ELF0_LOCATED,ELF1_LOCATED,ELF2_LOCATED)
 
@@ -422,8 +432,9 @@ def omg_patch(_ssid, _pass, _mode, slotsize=0, percent=30):
     if slotsize>0 :
         init_cmd += "f{SEP}keylog=0".format(SEP=":")
         ns = floor(((250*4)*(percent*.01))/(slotsize*4))
+        print(f"[If Applicable] Number of Slots: {ns} with size {slotsize*4}k each")
         for i in range(1,ns+1):
-            init+="f{SEP}payload={SLOT};".format(SEP=":",SLOT=slotsize)
+            init_cmd+="f{SEP}payload={SLOT};".format(SEP=":",SLOT=slotsize)
         init_cmd += "f{SEP}keylog=*;".format(SEP=":")    
     init_cmd += "\0"
 
@@ -492,9 +503,10 @@ def omg_input():
     FLASH_CUSTOMIZE = 0
     FLASH_SIZE = 0
     FLASH_PAYLOAD_PERCENT = 40
+    SANITIZED_SELECTION = False
     while not SANITIZED_SELECTION:
         try:
-            CUST_INPUT = str(input("\nCUSTOMIZE PAYLOAD AND KEYLOG ALLOCATIONS?\n(Note: Only compatible with Keylogger and Advanced O.MG Devices)\nBegin Customization? (Yes or No)")).lower()
+            CUST_INPUT = str(input("\nCUSTOMIZE PAYLOAD AND KEYLOG ALLOCATIONS?\n(Note: Only compatible with Keylogger and Advanced O.MG Devices)\nBegin Customization? (Yes or No) ")).lower()
             if "yes" in CUST_INPUT or "no" in CUST_INPUT:
                 SANITIZED_SELECTION = True
             if "yes" in CUST_INPUT:
@@ -503,21 +515,25 @@ def omg_input():
             pass
 
     if FLASH_CUSTOMIZE:
+        SANITIZED_SELECTION = False
         while not SANITIZED_SELECTION:
             try:
-                CUST_INPUT = int(str(input("\nPERCENTAGE OF FLASH ALLOCATED TO PAYLOAD: [Usually 40%] ")).lower().replace("%",""))
+                CUST_INPUT = int(input("\nPERCENTAGE OF FLASH ALLOCATED TO PAYLOAD: [Usually 40%] ").lower().replace("%",""))
                 if CUST_INPUT>0 and CUST_INPUT<101:
-                    SANITIZED_SELECTION=true
+                    SANITIZED_SELECTION=True
                     FLASH_PAYLOAD_PERCENT = CUST_INPUT
                     break
             except:
                 pass
-                
+    
+        SANITIZED_SELECTION=False
         while not SANITIZED_SELECTION:
             try:
                 CUST_INPUT = int(str(input("\nENTER PAYLOAD SLOT SIZE [In 4k chunks]: ")).lower().replace("%",""))
                 if (CUST_INPUT%4)==0:
                     FLASH_SIZE=(CUST_INPUT)/4
+                    SANITIZED_SELECTION=True
+                    break
                 else:
                     print(f"\n{CUST_INPUT} is not divisible by 4, try again. Note: Default is 4k")
             except:
@@ -617,7 +633,9 @@ if __name__ == '__main__':
             print("\n[ WIFI SETTINGS ]")
             print("\n\tWIFI_SSID: {SSID}\n\tWIFI_PASS: {PASS}\n\tWIFI_MODE: {MODE}\n\tWIFI_TYPE: {TYPE}".format(SSID=results.WIFI_SSID, PASS=results.WIFI_PASS, MODE=results.WIFI_MODE, TYPE=results.WIFI_TYPE))
             print("\n[ FIRMWARE USED ]")
-            print("\n\tINIT: {INIT}\n\tELF0: {ELF0}\n\tELF1: {ELF1}\n\tPAGE: {PAGE}".format(INIT=results.FILE_INIT, ELF0=results.FILE_ELF0, ELF1=results.FILE_ELF1, PAGE=results.FILE_PAGE, OFAT_INIT=results.OFAT_INIT))
+            print("\n\tINIT: {INIT}\n\tELF0: {ELF0}\n\tELF1: {ELF1}\n\tPAGE: {PAGE}".format(INIT=results.FILE_INIT, ELF0=results.FILE_ELF0, ELF1=results.FILE_ELF1, PAGE=results.FILE_PAGE, OFAT_INIT=results.FILE_OFAT_INIT))
+            #if results.FLASH_SLOTS > 0:
+            #	print("\n[ FLASH SETTINGS ]")
             print("\n<<< FIRMWARE PROCESS FINISHED, REMOVE CABLE >>>\n")
         elif MENU_MODE == '2':
             print("\nFACTORY RESET")
@@ -650,7 +668,7 @@ if __name__ == '__main__':
                 print("\n[ WIFI SETTINGS ]")
                 print("\n\tWIFI_SSID: {SSID}\n\tWIFI_PASS: {PASS}\n\tWIFI_MODE: {MODE}\n\tWIFI_TYPE: {TYPE}".format(SSID=results.WIFI_SSID, PASS=results.WIFI_PASS, MODE=results.WIFI_MODE, TYPE=results.WIFI_TYPE))
                 print("\n[ FIRMWARE USED ]")
-                print("\n\tINIT: {INIT}\n\tELF0: {ELF0}\n\tELF1: {ELF1}\n\tPAGE: {PAGE}".format(INIT=results.FILE_INIT, ELF0=results.FILE_ELF0, ELF1=results.FILE_ELF1, PAGE=results.FILE_PAGE, OFAT_INIT=results.OFAT_INIT))
+                print("\n\tINIT: {INIT}\n\tELF0: {ELF0}\n\tELF1: {ELF1}\n\tPAGE: {PAGE}".format(INIT=results.FILE_INIT, ELF0=results.FILE_ELF0, ELF1=results.FILE_ELF1, PAGE=results.FILE_PAGE, OFAT_INIT=results.FILE_OFAT_INIT))
                 print("\n<<< PROCESS FINISHED, REMOVE CABLE AND PLUG IN NEW CABLE >>>\n")
                 repeating = input("\n\n<<< PRESS ENTER TO UPGRADE NEXT CABLE, OR 'E' TO EXIT >>>\n")
                 complete(0)
@@ -693,4 +711,5 @@ if __name__ == '__main__':
         print("<<< FATAL ERROR: %s. PLEASE DISCONNECT AND RECONNECT CABLE AND START TASK AGAIN >>>"%str(e))
         sys.exit(1) # special case
     complete(0)
-   
+    
+    
