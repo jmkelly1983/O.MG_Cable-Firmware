@@ -129,6 +129,7 @@ class omg_results():
         self.FILE_OFAT_INIT = "init.bin"
         self.FLASH_SLOTS = 0
         self.FLASH_PAYLOAD_SIZE = 1
+        self.NUMBER_SLOTS = 7
 
 def get_dev_info(dev):
     esp = flashapi.ESP8266ROM(dev, baudrate, None)
@@ -194,7 +195,6 @@ def ask_for_port():
         except ValueError:
             pass
         else:
-            print("i am here")
             port = ports[index]
             FLASHER_VERSION = 1 # update back to 1         
             try:      
@@ -212,8 +212,6 @@ def ask_for_port():
 def omg_flash(command,tries=2):
     global FLASHER_VERSION
     ver = FLASHER_VERSION
-    from pprint import pprint
-    pprint(ver)
     if int(ver) == 2:
         try:
             flashapi.main(command)
@@ -423,19 +421,20 @@ def omg_patch(_ssid, _pass, _mode, slotsize=0, percent=30):
     settings = {
         "wifimode": _mode,
         "wifissid": _ssid,
-        "wifipass": _pass
+        "wifikey": _pass
     }
     for config,value in settings.items():
-        init_cmd+="{KEY}{SEP}{VALUE};".format(SEP=":", KEY=config,VALUE=value)
+        init_cmd+="S:{KEY}{SEP}{VALUE};".format(SEP="=", KEY=config,VALUE=value)
     #  once booted we know more, this is a sane default for now
     # if we set this to %f we can actually erase and allocate at once
     if slotsize>0 :
-        init_cmd += "f{SEP}keylog=0".format(SEP=":")
+        init_cmd += "f{SEP}keylog=0;".format(SEP=":")
         ns = floor(((250*4)*(percent*.01))/(slotsize*4))
         print(f"[If Applicable] Number of Slots: {ns} with size {slotsize*4}k each")
+        results.NUMBER_SLOTS = ns
         for i in range(1,ns+1):
-            init_cmd+="f{SEP}payload={SLOT};".format(SEP=":",SLOT=slotsize)
-        init_cmd += "f{SEP}keylog=*;".format(SEP=":")    
+            init_cmd+="f{SEP}payload{COUNT}={SLOT};".format(SEP=":", COUNT=i, SLOT=int(slotsize/4))
+        init_cmd += "f{SEP}keylog=*;".format(SEP=":")   
     init_cmd += "\0"
 
     try:
@@ -562,7 +561,29 @@ def omg_flashfw():
         print("\n<<< SOMETHING FAILED WHILE FLASHING >>>")
         complete(1)
 
-
+def omg_runflash(pre_erase=False):
+        mac, flash_size = get_dev_info(results.PORT_PATH)
+        if FLASHER_VERSION>=2:
+            if flash_size < 0x200000:
+                command = ['--baud', baudrate, '--port', results.PORT_PATH, 'erase_region', '0x70000', '0x8A000']
+            else:
+                command = ['--baud', baudrate, '--port', results.PORT_PATH, 'erase_region', '0x70000', '0x18A000']
+            omg_flash(command)
+        omg_input()
+        omg_patch(results.WIFI_SSID, results.WIFI_PASS, results.WIFI_MODE, results.FLASH_SLOTS, results.FLASH_PAYLOAD_SIZE)
+        omg_flashfw()
+        print("\n[ WIFI SETTINGS ]")
+        print("\n\tWIFI_SSID: {SSID}\n\tWIFI_PASS: {PASS}\n\tWIFI_MODE: {MODE}\n\tWIFI_TYPE: {TYPE}".format(SSID=results.WIFI_SSID, PASS=results.WIFI_PASS, MODE=results.WIFI_MODE, TYPE=results.WIFI_TYPE))
+        print("\n[ FIRMWARE USED ]")
+        print("\n\tINIT: {INIT}\n\tELF0: {ELF0}\n\tELF1: {ELF1}\n\tPAGE: {PAGE}".format(INIT=results.FILE_INIT, ELF0=results.FILE_ELF0, ELF1=results.FILE_ELF1, PAGE=results.FILE_PAGE))
+        if results.FLASH_SLOTS > 0:
+            print("\n[ CUSTOM PAYLOAD CONFIGURATION ]")
+            pp=results.FLASH_PAYLOAD_SIZE
+            kp=abs(100-results.FLASH_PAYLOAD_SIZE)
+            ns=int(results.FLASH_SLOTS*4)
+            np=results.NUMBER_SLOTS
+            print(f"\n\tPERCENT FLASH PAYLOAD SPACE: {pp}\n\tPERCENT FLASH KEYLOG SPACE: {kp}\n\tNUMBER OF PAYLOADS: {np}\n\tSIZE OF PAYLOAD SLOTS: {ns}k\n\t")
+  
 def get_script_path():
     return os.path.dirname(os.path.realpath(sys.argv[0]))
 
@@ -620,40 +641,13 @@ if __name__ == '__main__':
             pass
     # handle python serial exceptions here        
     try:
-    
         if MENU_MODE == '1':
             print("\nFIRMWARE UPGRADE")
-            #mac, flash_size = get_dev_info(results.PORT_PATH)
-            #command = ['--baud', baudrate, '--port', results.PORT_PATH, 'erase_region', '0x7F0000', '0x1000']
-            #omg_flash(command)
-
-            omg_input()
-            omg_patch(results.WIFI_SSID, results.WIFI_PASS, results.WIFI_MODE, results.FLASH_SLOTS, results.FLASH_PAYLOAD_SIZE)
-            omg_flashfw()
-            print("\n[ WIFI SETTINGS ]")
-            print("\n\tWIFI_SSID: {SSID}\n\tWIFI_PASS: {PASS}\n\tWIFI_MODE: {MODE}\n\tWIFI_TYPE: {TYPE}".format(SSID=results.WIFI_SSID, PASS=results.WIFI_PASS, MODE=results.WIFI_MODE, TYPE=results.WIFI_TYPE))
-            print("\n[ FIRMWARE USED ]")
-            print("\n\tINIT: {INIT}\n\tELF0: {ELF0}\n\tELF1: {ELF1}\n\tPAGE: {PAGE}".format(INIT=results.FILE_INIT, ELF0=results.FILE_ELF0, ELF1=results.FILE_ELF1, PAGE=results.FILE_PAGE, OFAT_INIT=results.FILE_OFAT_INIT))
-            #if results.FLASH_SLOTS > 0:
-            #	print("\n[ FLASH SETTINGS ]")
+            omg_runflash()
             print("\n<<< FIRMWARE PROCESS FINISHED, REMOVE CABLE >>>\n")
         elif MENU_MODE == '2':
             print("\nFACTORY RESET")
-            mac, flash_size = get_dev_info(results.PORT_PATH)
-            if flash_size < 0x200000:
-                command = ['--baud', baudrate, '--port', results.PORT_PATH, 'erase_region', '0x70000', '0x8A000']
-            else:
-                command = ['--baud', baudrate, '--port', results.PORT_PATH, 'erase_region', '0x70000', '0x18A000']
-            omg_flash(command)
-
-            #omg_input()
-            #omg_patch(results.WIFI_SSID, results.WIFI_PASS, results.WIFI_MODE)
-            #omg_flashfw()
-            #print("\n[ WIFI SETTINGS ]")
-            #print("\n\tWIFI_SSID: {SSID}\n\tWIFI_PASS: {PASS}\n\tWIFI_MODE: {MODE}\n\tWIFI_TYPE: {TYPE}".format(SSID=results.WIFI_SSID, PASS=results.WIFI_PASS, MODE=results.WIFI_MODE, TYPE=results.WIFI_TYPE))
-            #print("\n[ FIRMWARE USED ]")
-            #print("\n\tINIT: {INIT}\n\tELF0: {ELF0}\n\tELF1: {ELF1}\n\tPAGE: {PAGE}".format(INIT=results.FILE_INIT, ELF0=results.FILE_ELF0, ELF1=results.FILE_ELF1, PAGE=results.FILE_PAGE))
-            print("\n<<< FACTORY RESET PROCESS FINISHED, REMOVE CABLE >>>\n")
+            omg_runflash(True)
         elif MENU_MODE == '3':
             baudrate = '460800'
             mac, flash_size = get_dev_info(results.PORT_PATH)
@@ -661,15 +655,7 @@ if __name__ == '__main__':
             omg_input()
             repeating = ''
             while repeating != 'e':
-                #command = ['--baud', baudrate, '--port', results.PORT_PATH, 'erase_region', '0x7F0000', '0x1000']
-                #omg_flash(command)
-                omg_patch(results.WIFI_SSID, results.WIFI_PASS, results.WIFI_MODE, results.FLASH_SLOTS, results.FLASH_PAYLOAD_SIZE)
-                omg_flashfw()
-                print("\n[ WIFI SETTINGS ]")
-                print("\n\tWIFI_SSID: {SSID}\n\tWIFI_PASS: {PASS}\n\tWIFI_MODE: {MODE}\n\tWIFI_TYPE: {TYPE}".format(SSID=results.WIFI_SSID, PASS=results.WIFI_PASS, MODE=results.WIFI_MODE, TYPE=results.WIFI_TYPE))
-                print("\n[ FIRMWARE USED ]")
-                print("\n\tINIT: {INIT}\n\tELF0: {ELF0}\n\tELF1: {ELF1}\n\tPAGE: {PAGE}".format(INIT=results.FILE_INIT, ELF0=results.FILE_ELF0, ELF1=results.FILE_ELF1, PAGE=results.FILE_PAGE, OFAT_INIT=results.FILE_OFAT_INIT))
-                print("\n<<< PROCESS FINISHED, REMOVE CABLE AND PLUG IN NEW CABLE >>>\n")
+                omg_runflash(True)
                 repeating = input("\n\n<<< PRESS ENTER TO UPGRADE NEXT CABLE, OR 'E' TO EXIT >>>\n")
                 complete(0)
         elif MENU_MODE == '4':
@@ -679,10 +665,7 @@ if __name__ == '__main__':
             omg_input()
             repeating = ''
             while repeating != 'e':
-                if flash_size < 0x200000:
-                    command = ['--baud', baudrate, '--port', results.PORT_PATH, 'erase_region', '0x70000', '0x8A000']
-                else:
-                    command = ['--baud', baudrate, '--port', results.PORT_PATH, 'erase_region', '0x70000', '0x18A000']
+                omg_runflash(True)
                 repeating = input("\n\n<<< PRESS ENTER TO RESTORE NEXT CABLE, OR 'E' TO EXIT >>>\n")
         elif MENU_MODE == '5':
             print("\nBACKUP CABLE")
@@ -711,5 +694,3 @@ if __name__ == '__main__':
         print("<<< FATAL ERROR: %s. PLEASE DISCONNECT AND RECONNECT CABLE AND START TASK AGAIN >>>"%str(e))
         sys.exit(1) # special case
     complete(0)
-    
-    
